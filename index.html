@@ -386,10 +386,65 @@
     };
 
     // ==========================================
-    // 2. INITIALIZATION & ONLINE STATUS HANDLERS
+    // 2. DATA NORMALIZATION (ป้องกันปัญหาระบบพิมพ์มือใน Google Sheets แล้วไม่ยอมดึงเข้าแอป)
+    // ==========================================
+    function getValueByKeys(obj, keys, defaultValue = "") {
+      for (let key of keys) {
+        if (obj[key] !== undefined && obj[key] !== null) {
+          return obj[key];
+        }
+      }
+      return defaultValue;
+    }
+
+    function normalizePlayer(p) {
+      return {
+        Player_ID: String(getValueByKeys(p, ["Player_ID", "player_id", "Player ID", "player id", "ID", "id"])).trim(),
+        Player_Name: String(getValueByKeys(p, ["Player_Name", "player_name", "Player Name", "player name", "Name", "name", "ชื่อ", "ชื่อผู้เล่น", "ชื่อ-นามสกุล"])).trim() || "นักกีฬาไม่ระบุชื่อ",
+        Position_Code: String(getValueByKeys(p, ["Position_Code", "position_code", "Position Code", "position code", "Position", "position", "ตำแหน่ง"], "UN")).trim().toUpperCase(),
+        Team_ID: String(getValueByKeys(p, ["Team_ID", "team_id", "Team ID", "team id", "Team", "team", "สังกัด", "ทีม", "สโมสร"])).trim(),
+        Is_Captain: (getValueByKeys(p, ["Is_Captain", "is_captain", "Is Captain", "is captain", "captain", "กัปตัน"]) === true || String(getValueByKeys(p, ["Is_Captain", "is_captain", "Is Captain", "is captain", "captain", "กัปตัน"])).toUpperCase() === "TRUE"),
+        Image_URL: String(getValueByKeys(p, ["Image_URL", "image_url", "Image URL", "image url", "image", "Image", "รูปภาพ", "รูป"])).trim()
+      };
+    }
+
+    function normalizeTeam(t) {
+      return {
+        Team_ID: String(getValueByKeys(t, ["Team_ID", "team_id", "Team ID", "team id", "ID", "id"])).trim(),
+        Team_Name: String(getValueByKeys(t, ["Team_Name", "team_name", "Team Name", "team name", "Name", "name", "ชื่อทีม", "สโมสร", "ชื่อสโมสร"])).trim() || "สโมสรไม่ระบุชื่อ",
+        Theme_Color: String(getValueByKeys(t, ["Theme_Color", "theme_color", "Theme Color", "theme color", "color", "Color", "สี", "สีหลัก", "ธีมสี"], "#3b82f6")).trim(),
+        Emoji_Logo: String(getValueByKeys(t, ["Emoji_Logo", "emoji_logo", "Emoji Logo", "emoji logo", "emoji", "Emoji", "โลโก้"], "🏐")).trim(),
+        Image_URL: String(getValueByKeys(t, ["Image_URL", "image_url", "Image URL", "image url", "image", "Image"])).trim()
+      };
+    }
+
+    function normalizeMatch(m) {
+      return {
+        Match_ID: String(getValueByKeys(m, ["Match_ID", "match_id", "Match ID", "match id", "ID", "id"])).trim(),
+        Match_Date: String(getValueByKeys(m, ["Match_Date", "match_date", "Match Date", "match date", "Date", "date", "วันที่"])).trim() || new Date().toISOString().split('T')[0],
+        Team_A_ID: String(getValueByKeys(m, ["Team_A_ID", "team_a_id", "Team A ID", "team a id", "Team_A", "team_a", "Team A", "team a", "ทีมA"])).trim(),
+        Team_B_ID: String(getValueByKeys(m, ["Team_B_ID", "team_b_id", "Team B ID", "team b id", "Team_B", "team_b", "Team B", "team b", "ทีมB"])).trim(),
+        Status: String(getValueByKeys(m, ["Status", "status", "สถานะ"], "scheduled")).trim(),
+        Winner_Team_ID: String(getValueByKeys(m, ["Winner_Team_ID", "winner_team_id", "Winner", "winner"])).trim(),
+        Points_A: Number(getValueByKeys(m, ["Points_A", "points_a", "Points A", "points a", "คะแนนA"], 0)),
+        Points_B: Number(getValueByKeys(m, ["Points_B", "points_b", "Points B", "points b", "คะแนนB"], 0))
+      };
+    }
+
+    function normalizeMatchSet(s) {
+      return {
+        Set_ID: String(getValueByKeys(s, ["Set_ID", "set_id", "Set ID", "set id", "ID", "id"])).trim(),
+        Match_ID: String(getValueByKeys(s, ["Match_ID", "match_id", "Match ID", "match id"])).trim(),
+        Set_Number: Number(getValueByKeys(s, ["Set_Number", "set_number", "Set Number", "set number", "เซตที่"], 1)),
+        Score_A: Number(getValueByKeys(s, ["Score_A", "score_a", "Score A", "score a"], 0)),
+        Score_B: Number(getValueByKeys(s, ["Score_B", "score_b", "Score B", "score b"], 0))
+      };
+    }
+
+    // ==========================================
+    // 3. INITIALIZATION & ONLINE STATUS HANDLERS
     // ==========================================
     window.addEventListener('load', async () => {
-      // ตรวจสอบสถานะการเชื่อมต่อครั้งแรก
       updateOnlineStatus();
       
       window.addEventListener('online', () => {
@@ -398,11 +453,9 @@
       });
       window.addEventListener('offline', () => updateOnlineStatus(false));
 
-      // โหลดข้อมูลจาก IndexedDB มาเก็บใน state และเรนเดอร์ก่อนทันที (<100ms)
       await loadLocalDataToState();
       renderAllTabs();
 
-      // หากเชื่อมต่ออินเทอร์เน็ต ให้พยายามซิงก์ข้อมูลคลาวด์เบื้องหลัง
       if (appState.isOnline) {
         triggerBackgroundSync();
       }
@@ -428,7 +481,6 @@
       appState.matches = await db.matches.toArray();
       appState.matchSets = await db.matchSets.toArray();
 
-      // ในกรณีเปิดแอปครั้งแรกและยังไม่มีข้อมูลใดๆ ใน IndexedDB เลย ให้ใส่ข้อมูล Mock Data เริ่มต้นเพื่อทดลองใช้ทันที
       if (appState.teams.length === 0 && appState.players.length === 0) {
         await initMockDatabase();
       }
@@ -448,18 +500,17 @@
         { Player_ID: "p-4", Player_Name: "นพดล ฝึกหัด", Position_Code: "UN", Team_ID: "", Is_Captain: false, Image_URL: "" }
       ];
 
-      await db.teams.bulkAdd(mockTeams);
-      await db.players.bulkAdd(mockPlayers);
+      await db.teams.bulkPut(mockTeams);
+      await db.players.bulkPut(mockPlayers);
       await loadLocalDataToState();
     }
 
     // ==========================================
-    // 3. TAB CONTROLLER
+    // 4. TAB CONTROLLER
     // ==========================================
     function switchTab(tabId) {
       appState.activeTab = tabId;
       
-      // อัปเดต CSS ของปุ่มเนวิเกชั่น
       const tabs = ['home', 'teams', 'players', 'matches'];
       tabs.forEach(t => {
         const btn = document.getElementById(`nav-${t}`);
@@ -484,16 +535,13 @@
     }
 
     // ==========================================
-    // 4. RENDERING & UI FUNCTIONS
+    // 5. RENDERING & UI FUNCTIONS
     // ==========================================
 
-    // 4.1 หน้าแรก: สรุปตารางคะแนนจัดอันดับพรีเมียร์ลีก (Leaderboard)
     function renderLeaderboard() {
       const container = document.getElementById('leaderboard-container');
       
-      // ประมวลผลคะแนนแต่ละทีมตามข้อกำหนดและกฎกติกาสากล
       const computedLeaderboard = appState.teams.map(team => {
-        // ค้นหาประวัติการแข่งขันทั้งหมดที่สโมสรนี้แข่งขันเสร็จสิ้นแล้ว
         const completedMatches = appState.matches.filter(m => 
           m.Status === 'completed' && (m.Team_A_ID === team.Team_ID || m.Team_B_ID === team.Team_ID)
         );
@@ -522,7 +570,6 @@
         };
       });
 
-      // จัดเรียงลำดับ: แต้มสูงสุดลงไปน้อยสุด, ถ้าแต้มเท่าให้ดูจำนวนแมตช์ที่ชนะ
       computedLeaderboard.sort((a, b) => b.points - a.points || b.wins - a.wins);
 
       if (computedLeaderboard.length === 0) {
@@ -561,7 +608,6 @@
       container.innerHTML = html;
     }
 
-    // 4.2 หน้าสโมสร: แสดงสโมสรทั้งหมด
     function renderTeamsList() {
       const container = document.getElementById('teams-container');
       if (appState.teams.length === 0) {
@@ -598,7 +644,6 @@
               </div>
             </div>
 
-            <!-- แสดงพรีวิวรูปถ่ายนักกีฬาในสังกัด -->
             <div class="bg-slate-50 p-2 rounded-lg">
               <p class="text-[9px] text-slate-400 font-bold uppercase mb-1">สมาชิกทีมปัจจุบัน</p>
               ${members.length === 0 ? `
@@ -621,13 +666,11 @@
       container.innerHTML = html;
     }
 
-    // 4.3 หน้าผู้เล่น: แสดงและกรองข้อมูลผู้เล่น (รองรับ Inline Dropdown เพื่อความไวสูงสุด)
     function renderPlayersList() {
       const container = document.getElementById('players-container');
       const teamFilter = document.getElementById('filter-team').value;
       const posFilter = document.getElementById('filter-position').value;
 
-      // ปรับปรุง Dropdown ตัวเลือกคัดกรองตามข้อมูลสโมสรจริง
       const filterTeamSelect = document.getElementById('filter-team');
       const currentSelectedFilterTeam = filterTeamSelect.value || 'all';
       let teamOptionsHtml = '<option value="all">ทั้งหมดทุกทีม</option><option value="none">ไม่มีสังกัดทีม</option>';
@@ -637,7 +680,6 @@
       filterTeamSelect.innerHTML = teamOptionsHtml;
       filterTeamSelect.value = currentSelectedFilterTeam;
 
-      // กรองข้อมูลผู้เล่น
       const filtered = appState.players.filter(p => {
         const passTeam = teamFilter === 'all' || 
                          (teamFilter === 'none' && !p.Team_ID) || 
@@ -675,7 +717,6 @@
               <button onclick="deletePlayer('${player.Player_ID}')" class="p-1 text-slate-300 hover:text-red-500 font-bold transition flex-shrink-0 text-xs">🗑️ ลบ</button>
             </div>
 
-            <!-- แถบปุ่มคัดแยกแบบ Inline Dropdowns เรียงแถวเดียวกัน ตอบสนองภายใน <500ms -->
             <div class="grid grid-cols-2 gap-2 pt-2 border-t border-dashed">
               <div>
                 <span class="text-[8px] text-slate-400 font-black block uppercase mb-1">ตำแหน่ง</span>
@@ -703,7 +744,6 @@
       container.innerHTML = html;
     }
 
-    // 4.4 หน้าแข่งขัน: แสดงตารางการแข่งขัน
     function renderMatchesList() {
       const container = document.getElementById('matches-container');
       if (appState.matches.length === 0) {
@@ -728,7 +768,6 @@
               </span>
             </div>
 
-            <!-- คะแนนเปรียบเทียบคู่ชิง -->
             <div class="grid grid-cols-12 gap-1 items-center py-1">
               <div class="col-span-5 flex flex-col items-center text-center">
                 ${teamA.Image_URL ? `<img src="${teamA.Image_URL}" class="w-10 h-10 rounded-full object-cover mb-1">` : `<span class="text-xl mb-1">${teamA.Emoji_Logo}</span>`}
@@ -744,7 +783,6 @@
               </div>
             </div>
 
-            <!-- คะแนนรายเซต -->
             ${sets.length > 0 ? `
               <div class="bg-slate-50 p-2 rounded-lg flex justify-center space-x-1.5">
                 ${sets.map((s, i) => `
@@ -756,7 +794,6 @@
               </div>
             ` : ''}
 
-            <!-- ปุ่มควบคุม -->
             <div class="flex justify-end space-x-1 pt-1">
               <button onclick="editMatch('${match.Match_ID}')" class="px-2.5 py-1 text-[10px] bg-slate-50 border hover:bg-slate-100 font-bold rounded-lg transition">✏️ แก้ไขคะแนน</button>
               <button onclick="deleteMatch('${match.Match_ID}')" class="px-2.5 py-1 text-[10px] bg-red-50 text-red-600 border border-red-50 hover:bg-red-100 font-bold rounded-lg transition">🗑️ ลบแมตช์</button>
@@ -769,7 +806,7 @@
     }
 
     // ==========================================
-    // 5. INLINE ACTIONS (INSTANT FEEDBACK)
+    // 6. INLINE ACTIONS (INSTANT FEEDBACK)
     // ==========================================
     async function updatePlayerPositionInline(playerId, newPosCode) {
       const player = appState.players.find(p => p.Player_ID === playerId);
@@ -778,9 +815,8 @@
       player.Position_Code = newPosCode;
       await db.players.put(player);
       await loadLocalDataToState();
-      renderPlayersList(); // เด้ง UI ทันที
+      renderPlayersList();
 
-      // พยายามส่งประมวลผลขึ้น Google Sheets ในพื้นหลัง
       queueBackgroundAction('player', player);
     }
 
@@ -816,10 +852,9 @@
     }
 
     // ==========================================
-    // 6. MODAL INTERACTIVE LOGIC (CRUD)
+    // 7. MODAL INTERACTIVE LOGIC (CRUD)
     // ==========================================
 
-    // --- TEAMS CONTROLLER ---
     function openTeamModal(teamId = null) {
       const modal = document.getElementById('modal-team');
       const title = document.getElementById('modal-team-title');
@@ -856,7 +891,6 @@
       document.getElementById('modal-team').classList.add('hidden');
     }
 
-    // ฟังก์ชันยึดเปิด modal แก้ไขสโมสร
     function editTeam(teamId) {
       openTeamModal(teamId);
     }
@@ -889,7 +923,6 @@
       if (confirm("ต้องการลบสโมสรนี้หรือไม่? สมาชิกในทีมจะหลุดเป็นอิสระไม่มีสังกัด")) {
         await db.teams.delete(teamId);
         
-        // ปลดผู้เล่นให้ไม่มีสังกัด
         const members = appState.players.filter(p => p.Team_ID === teamId);
         for (let m of members) {
           m.Team_ID = '';
@@ -904,12 +937,10 @@
       }
     }
 
-    // --- PLAYERS CONTROLLER ---
     function openPlayerModal() {
       const modal = document.getElementById('modal-player');
       const teamSelect = document.getElementById('form-player-team');
       
-      // อัปเดตรายชื่อทีมในตัวเลือกในหน้าลงทะเบียน
       let teamOptions = '<option value="">ไม่มีสังกัดทีม</option>';
       appState.teams.forEach(t => {
         teamOptions += `<option value="${t.Team_ID}">${t.Team_Name}</option>`;
@@ -963,9 +994,6 @@
       }
     }
 
-    // --- MATCHES & SET SCORING CONTROLLER ---
-    let matchSetsDraft = [];
-
     function openMatchModal(matchId = null) {
       const modal = document.getElementById('modal-match');
       const teamASelect = document.getElementById('form-match-teamA');
@@ -980,7 +1008,6 @@
 
       document.getElementById('match-form').reset();
       document.getElementById('sets-inputs-container').innerHTML = '';
-      matchSetsDraft = [];
 
       if (matchId) {
         const match = appState.matches.find(m => m.Match_ID === matchId);
@@ -1001,7 +1028,6 @@
         }
       } else {
         document.getElementById('form-match-id').value = '';
-        // เริ่มต้นมีให้ 1 เซต
         addNewSetRow();
       }
 
@@ -1012,7 +1038,6 @@
       document.getElementById('modal-match').classList.add('hidden');
     }
 
-    // ฟังก์ชันเรียกเปิดแก้ไขข้อมูลแมตช์
     function editMatch(matchId) {
       openMatchModal(matchId);
     }
@@ -1046,7 +1071,6 @@
 
     function removeLastSetRow(btn) {
       btn.parentElement.remove();
-      // จัดลำดับเซตย่อยใหม่
       const container = document.getElementById('sets-inputs-container');
       Array.from(container.children).forEach((child, i) => {
         child.querySelector('span').textContent = `เซตที่ ${i + 1}`;
@@ -1076,7 +1100,6 @@
         return;
       }
 
-      // ตรวจสอบและดึงข้อมูลเซตย่อยจาก Input DOM
       const rows = document.getElementById('sets-inputs-container').children;
       let winsA = 0;
       let winsB = 0;
@@ -1099,7 +1122,6 @@
         });
       }
 
-      // การตัดสินผลการแข่งและคิดสถิติคะแนน (ลีกวอลเลย์บอลสากล)
       let winnerTeamId = "";
       let pointsA = 0;
       let pointsB = 0;
@@ -1107,7 +1129,6 @@
       if (status === 'completed') {
         if (winsA > winsB) {
           winnerTeamId = teamAId;
-          // ชนะ 3-0 หรือ 3-1 ได้ 3 คะแนน, ชนะ 3-2 ได้ 2 คะแนน
           pointsA = (winsA === 3 && winsB <= 1) ? 3 : 2;
           pointsB = (winsB === 2) ? 1 : 0;
         } else {
@@ -1128,16 +1149,14 @@
         Points_B: pointsB
       };
 
-      // บันทึกลง IndexedDB
       await db.matches.put(matchPayload);
       await db.matchSets.where('Match_ID').equals(matchId).delete();
-      await db.matchSets.bulkAdd(setsPayload);
+      await db.matchSets.bulkPut(setsPayload);
 
       await loadLocalDataToState();
       renderAllTabs();
       closeMatchModal();
 
-      // แพ็กข้อมูลส่งกลับคลาวด์แบบปลอดภัย (แยก Payload เป็น data และ sets ชัดเจน)
       queueBackgroundAction('match', {
         data: matchPayload,
         sets: setsPayload
@@ -1158,7 +1177,7 @@
     }
 
     // ==========================================
-    // 7. OFFLINE-FIRST BACKGROUND SYNC ENGINE (GAS API)
+    // 8. OFFLINE-FIRST BACKGROUND SYNC ENGINE (DEDUPLICATED)
     // ==========================================
     async function queueBackgroundAction(type, dataPayload) {
       const queueItem = {
@@ -1174,7 +1193,6 @@
         })
       };
 
-      // เพิ่มคำสั่งเข้า Sync Queue ของ IndexedDB
       await db.syncQueue.add(queueItem);
       
       if (appState.isOnline) {
@@ -1182,12 +1200,33 @@
       }
     }
 
+    // ฟังก์ชันกรองและเอาเฉพาะสถานะล่าสุดของ Entity ในคิวส่งออก (Debounce/Deduplicate) ป้องกันปัญหาข้อมูลซ้ำซ้อน
+    function deduplicateQueue(queue) {
+      const uniqueItems = {};
+      queue.forEach(item => {
+        let key = "";
+        if (item.type === "player" && item.data) {
+          key = "player_" + item.data.Player_ID;
+        } else if (item.type === "team" && item.data) {
+          key = "team_" + item.data.Team_ID;
+        } else if (item.type === "match" && item.data) {
+          key = "match_" + item.data.Match_ID;
+        } else if (item.type === "delete") {
+          key = "delete_" + item.sheetName + "_" + item.id;
+        }
+
+        if (key) {
+          uniqueItems[key] = item; // ตัวอัปเดตล่าสุดจะทับตัวเก่าเสมอ
+        }
+      });
+      return Object.values(uniqueItems);
+    }
+
     async function triggerBackgroundSync() {
       if (appState.syncing) return;
       
-      const queue = await db.syncQueue.toArray();
-      if (queue.length === 0) {
-        // หากไม่มีคิวค้าง ให้ไปดึงข้อมูลล่าสุดจากฝั่ง Google Sheet มารวมกัน
+      const fullQueue = await db.syncQueue.toArray();
+      if (fullQueue.length === 0) {
         await fetchAllFromCloud();
         return;
       }
@@ -1199,20 +1238,24 @@
       syncBtn.classList.add('opacity-50');
       syncText.textContent = "กำลังเชื่อมโยง...";
 
+      // กรองคิวออฟไลน์ให้เหลือเฉพาะสถานะล่าสุดเท่านั้น
+      const processedQueue = deduplicateQueue(fullQueue);
+
       try {
         const response = await fetch(GAS_API_URL, {
           method: 'POST',
-          body: JSON.stringify({ action: 'syncAll', queue: queue })
+          body: JSON.stringify({ action: 'syncAll', queue: processedQueue })
         });
         const result = await response.json();
         
         if (result.status === 'success') {
-          // หากอัปโหลดสำเร็จแล้ว ให้ลบคิวเก่าออกจาก IndexedDB
-          await db.syncQueue.clear();
+          // เจาะจงลบเฉพาะแถว ID ที่ส่งไปซิงก์ประมวลผลแล้วเท่านั้น (ป้องกัน Race Condition ทับรายการแก้ไขในขณะกำลังส่ง)
+          const syncedIds = fullQueue.map(item => item.id);
+          await db.syncQueue.bulkDelete(syncedIds);
           await fetchAllFromCloud();
         }
       } catch (err) {
-        console.warn("การเชื่อมโยงระบบล้มเหลว คิวจะถูกส่งอัตโนมัติเมื่อระบบอินเทอร์เน็ตคงที่", err);
+        console.warn("การเชื่อมโยงล้มเหลว คิวถูกเก็บในเครื่องและจะทำซิงก์ใหม่อัตโนมัติเมื่อสัญญาณคงที่", err);
       } finally {
         appState.syncing = false;
         syncBtn.classList.remove('opacity-50');
@@ -1228,30 +1271,38 @@
         const cloudData = await res.json();
         
         if (cloudData.teams && cloudData.players) {
-          // คัดกรองข้อมูลสลัดแถวที่ไม่มี ID ที่สมบูรณ์ออกเพื่อป้องกัน IndexedDB แครชในเครื่อง
-          const validTeams = cloudData.teams.filter(t => t.Team_ID && String(t.Team_ID).trim() !== "");
-          const validPlayers = cloudData.players.filter(p => p.Player_ID && String(p.Player_ID).trim() !== "");
-          const validMatches = cloudData.matches.filter(m => m.Match_ID && String(m.Match_ID).trim() !== "");
-          const validSets = cloudData.matchSets.filter(s => s.Set_ID && String(s.Set_ID).trim() !== "");
+          // Normalization: จัดสัดส่วนข้อมูลจากคลาวด์ให้อยู่ในเทมเพลตมาตรฐาน ป้องกันการพิมพ์หัวตารางในชีตผิด
+          const normTeams = cloudData.teams.map(normalizeTeam).filter(t => t.Team_ID);
+          const normPlayers = cloudData.players.map(normalizePlayer).filter(p => p.Player_ID);
+          const normMatches = cloudData.matches.map(normalizeMatch).filter(m => m.Match_ID);
+          const normSets = cloudData.matchSets.map(normalizeMatchSet).filter(s => s.Set_ID);
 
-          // เคลียร์และเขียนทับข้อมูลในบราวเซอร์ด้วยข้อมูลอัปเดตล่าสุดจากคลาวด์
-          await db.transaction('rw', [db.teams, db.players, db.matches, db.matchSets], async () => {
+          // ซิงก์ข้อมูลลงเบรวเซอร์ด้วยระบบ Put ที่ป้องกันข้อผิดพลาดการ Rollback แบบยกตาราง (bulkPut แทน bulkAdd)
+          try {
             await db.teams.clear();
-            await db.players.clear();
-            await db.matches.clear();
-            await db.matchSets.clear();
+            await db.teams.bulkPut(normTeams);
+          } catch(e) { console.error("Teams sync error", e); }
 
-            await db.teams.bulkAdd(validTeams);
-            await db.players.bulkAdd(validPlayers);
-            await db.matches.bulkAdd(validMatches);
-            await db.matchSets.bulkAdd(validSets);
-          });
+          try {
+            await db.players.clear();
+            await db.players.bulkPut(normPlayers);
+          } catch(e) { console.error("Players sync error", e); }
+
+          try {
+            await db.matches.clear();
+            await db.matches.bulkPut(normMatches);
+          } catch(e) { console.error("Matches sync error", e); }
+
+          try {
+            await db.matchSets.clear();
+            await db.matchSets.bulkPut(normSets);
+          } catch(e) { console.error("Sets sync error", e); }
 
           await loadLocalDataToState();
           renderAllTabs();
         }
       } catch (e) {
-        console.warn("Cannot pull from Cloud. Operating in local storage database.", e);
+        console.warn("Operating in offline database", e);
       }
     }
 
@@ -1259,7 +1310,6 @@
       triggerBackgroundSync();
     }
 
-    // ฟังก์ชันเสริม: แปลงไฟล์ภาพผู้เล่น/ทีม เป็น Base64
     function convertFileToBase64(fileInputId, previewImgId) {
       const fileInput = document.getElementById(fileInputId);
       const preview = document.getElementById(previewImgId);
