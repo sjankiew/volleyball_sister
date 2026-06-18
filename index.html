@@ -7,12 +7,8 @@
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  
-  <!-- Dexie.js CDN (IndexedDB สำหรับเก็บข้อมูลแบบ Offline-First ในเครื่อง) -->
-  <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
 
   <style>
-    /* สไตล์จำกัดขอบเขตแสดงผลเลียนแบบแอปมือถือเพื่อความพรีเมียม */
     body {
       -webkit-tap-highlight-color: transparent;
     }
@@ -30,7 +26,28 @@
 </head>
 <body class="bg-slate-100 min-h-screen flex justify-center items-stretch font-sans text-slate-800">
 
-  <!-- Main App Frame (จำกัดขนาดหน้าจอสำหรับ Mobile & Tablet เท่านั้น) -->
+  <!-- --- LOADING OVERLAY (ป้องกันการกดส่งข้อมูลซ้ำซ้อนขณะบันทึก) --- -->
+  <div id="loading-overlay" class="fixed inset-0 bg-slate-950/70 z-[100] flex flex-col items-center justify-center text-white font-bold hidden animate-fade-in">
+    <div class="animate-spin rounded-full h-12 w-12 border-4 border-slate-300 border-t-blue-500 mb-4"></div>
+    <p id="loading-text" class="text-xs tracking-wider text-center px-4">กำลังประมวลผลกับ Google Sheets...</p>
+  </div>
+
+  <!-- --- TOAST NOTIFICATIONS (การแสดงผลสถานะแบบ Non-blocking) --- -->
+  <div id="toast-container" class="fixed top-4 right-4 left-4 md:left-auto md:w-80 z-[120] space-y-2 pointer-events-none"></div>
+
+  <!-- --- CUSTOM MODAL ALERT (ทดแทนการใช้ alert() แบบเดิมที่มักติดปัญหาใน sandbox iframe) --- -->
+  <div id="custom-alert-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[110] hidden">
+    <div class="bg-white rounded-2xl w-full max-w-xs p-5 shadow-2xl text-center space-y-4">
+      <div id="custom-alert-icon" class="text-4xl">⚠️</div>
+      <h4 id="custom-alert-title" class="font-extrabold text-sm text-slate-800">แจ้งเตือน</h4>
+      <p id="custom-alert-message" class="text-xs text-slate-500 leading-relaxed"></p>
+      <button onclick="closeCustomAlert()" class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-blue-200">
+        ตกลง
+      </button>
+    </div>
+  </div>
+
+  <!-- Main App Frame (จำกัดขนาดหน้าจอสำหรับ Mobile & Tablet เท่านั้นเพื่อดีไซน์ที่สมบูรณ์) -->
   <div class="w-full max-w-lg bg-slate-50 flex flex-col min-h-screen relative pb-16 shadow-2xl border-x border-slate-200">
     
     <!-- --- HEADER --- -->
@@ -41,15 +58,17 @@
           <h1 class="font-extrabold text-sm leading-tight">VolleySquad Live</h1>
           <div class="flex items-center space-x-1 mt-0.5">
             <span id="connection-indicator" class="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span id="connection-status" class="text-[10px] text-slate-300 font-bold">Online (Synced)</span>
+            <span id="connection-status" class="text-[10px] text-slate-300 font-bold">เชื่อมโยงระบบคลาวด์</span>
           </div>
         </div>
       </div>
       
-      <div class="flex items-center space-x-2">
-        <!-- ปุ่ม Cloud Sync เมื่อต้องการอัปเดตแบบแมนนวล -->
-        <button onclick="triggerCloudSync()" id="sync-button" class="bg-slate-800 hover:bg-slate-700 text-[10px] font-bold px-2.5 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1 transition">
-          <span>🔄</span> <span id="sync-text">รีเฟรช</span>
+      <div class="flex items-center space-x-1.5">
+        <button onclick="fetchAllFromCloud()" class="bg-slate-800 hover:bg-slate-700 text-[10px] font-bold px-2.5 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1 transition">
+          <span>🔄</span> <span>ดึงข้อมูลล่าสุด</span>
+        </button>
+        <button onclick="openSettingsModal()" class="bg-slate-800 hover:bg-slate-700 p-1.5 rounded-lg border border-slate-700 transition" title="ตั้งค่าเซิร์ฟเวอร์">
+          ⚙️
         </button>
       </div>
     </header>
@@ -62,14 +81,14 @@
         <div class="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-4 text-white shadow-md">
           <span class="text-[10px] uppercase tracking-wider font-extrabold text-blue-200">STANDINGS / LEADERBOARD</span>
           <h2 class="text-base font-black mt-1">ตารางคะแนนและการจัดอันดับลีก</h2>
-          <p class="text-[11px] text-blue-100 opacity-90 mt-0.5">เรียงอันดับตามคะแนนรวม ชนะ-แพ้ และสถิติเซตตามเกณฑ์สากล</p>
+          <p class="text-[11px] text-blue-100 opacity-90 mt-0.5">ดึงผลลัพธ์และเรียงคะแนนรวมแบบเรียลไทม์จากระบบคลาวด์</p>
         </div>
 
         <!-- รายละเอียดตารางจัดอันดับลีก (Leaderboard) -->
         <div class="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
           <div class="flex justify-between items-center mb-3">
             <h3 class="text-xs font-black text-slate-500 uppercase tracking-wider">🏆 อันดับตารางคะแนน</h3>
-            <span class="text-[10px] text-slate-400 font-semibold bg-slate-50 px-2 py-0.5 rounded-full">อัปเดตสด</span>
+            <span class="text-[10px] text-slate-400 font-semibold bg-slate-50 px-2 py-0.5 rounded-full">สดจาก Google Sheets</span>
           </div>
           
           <div class="space-y-2" id="leaderboard-container">
@@ -100,7 +119,7 @@
         <div class="flex justify-between items-center">
           <div>
             <h2 class="font-extrabold text-slate-800 text-sm">รายชื่อนักกีฬาในสังกัด</h2>
-            <p class="text-[11px] text-slate-500">เปลี่ยนสโมสรหรือตำแหน่งได้ทันทีผ่าน Dropdown</p>
+            <p class="text-[11px] text-slate-500">เปลี่ยนสโมสรหรือตำแหน่ง ระบบจะบันทึกลงคลาวด์ทันที</p>
           </div>
           <button onclick="openPlayerModal()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold rounded-lg shadow-sm transition">
             + ลงทะเบียนผู้เล่น
@@ -111,15 +130,14 @@
         <div class="bg-white p-3 rounded-xl border border-slate-100 shadow-sm grid grid-cols-2 gap-2">
           <div>
             <label class="text-[9px] text-slate-400 font-bold block mb-1">กรองตามสังกัดทีม</label>
-            <select id="filter-team" onchange="renderPlayersList()" class="w-full text-xs border rounded p-1.5 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500">
+            <select id="filter-team" onchange="renderPlayersList()" class="w-full text-xs border rounded p-1.5 bg-slate-50 focus:outline-none">
               <option value="all">ทั้งหมดทุกทีม</option>
               <option value="none">ไม่มีสังกัดทีม</option>
-              <!-- ตัวเลือกสโมสรจะถูกเรนเดอร์แบบไดนามิก -->
             </select>
           </div>
           <div>
             <label class="text-[9px] text-slate-400 font-bold block mb-1">กรองตามตำแหน่ง</label>
-            <select id="filter-position" onchange="renderPlayersList()" class="w-full text-xs border rounded p-1.5 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500">
+            <select id="filter-position" onchange="renderPlayersList()" class="w-full text-xs border rounded p-1.5 bg-slate-50 focus:outline-none">
               <option value="all">ทั้งหมดทุกตำแหน่ง</option>
               <option value="UN">ยังไม่ระบุตำแหน่ง</option>
               <option value="S">ตัวเซต (Setter)</option>
@@ -182,7 +200,7 @@
 
     <!-- MODAL 1: เพิ่ม/แก้ไขสโมสร -->
     <div id="modal-team" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 hidden">
-      <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-fade-in">
+      <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
         <div class="bg-slate-900 text-white p-4">
           <h3 id="modal-team-title" class="font-extrabold text-sm">ลงทะเบียนสโมสรใหม่</h3>
           <p class="text-[10px] text-slate-300">ระบุชื่อสโมสร สัญลักษณ์ และรูปภาพโลโก้</p>
@@ -239,7 +257,7 @@
 
     <!-- MODAL 2: เพิ่มผู้เล่นใหม่ -->
     <div id="modal-player" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 hidden">
-      <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-fade-in">
+      <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
         <div class="bg-slate-900 text-white p-4">
           <h3 class="font-extrabold text-sm">ลงทะเบียนนักกีฬาใหม่</h3>
           <p class="text-[10px] text-slate-300">ระบุชื่อ รูปถ่าย เพื่อลงทะเบียนเข้าสู่ระบบ</p>
@@ -252,7 +270,6 @@
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-slate-500 font-bold mb-1">ตำแหน่งตั้งต้น</label>
-              <!-- กำหนดให้เริ่มต้นเป็น ยังไม่ระบุตำแหน่ง (UN) ตามสเปกความต้องการ -->
               <select id="form-player-position" class="w-full border rounded-xl p-2.5 text-xs bg-slate-50">
                 <option value="UN">ยังไม่ระบุตำแหน่ง</option>
                 <option value="S">ตัวเซต (Setter)</option>
@@ -266,7 +283,6 @@
               <label class="block text-slate-500 font-bold mb-1">สโมสรต้นสังกัด</label>
               <select id="form-player-team" class="w-full border rounded-xl p-2.5 text-xs bg-slate-50">
                 <option value="">ไม่มีสังกัดทีม</option>
-                <!-- สโมสรจะแปรผันตามชีต -->
               </select>
             </div>
           </div>
@@ -286,7 +302,7 @@
 
     <!-- MODAL 3: บันทึกข้อมูลการจัดแมตช์และสรุปคะแนนเซต -->
     <div id="modal-match" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 overflow-y-auto hidden">
-      <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-fade-in my-8">
+      <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl my-8">
         <div class="bg-slate-900 text-white p-4">
           <h3 class="font-extrabold text-sm">จัดแมตช์และรายงานผล</h3>
           <p class="text-[10px] text-slate-300">เลือกทีมเข้าแข่งและบันทึกคะแนนในแต่ละเซต</p>
@@ -297,13 +313,13 @@
             <div>
               <label class="block text-slate-500 font-bold mb-1">ทีมเหย้า / ทีม A</label>
               <select id="form-match-teamA" class="w-full border rounded-xl p-2.5 text-xs bg-slate-50 font-bold">
-                <!-- สโมสร -->
+                <!-- รายชื่อทีม -->
               </select>
             </div>
             <div>
               <label class="block text-slate-500 font-bold mb-1">ทีมเยือน / ทีม B</label>
               <select id="form-match-teamB" class="w-full border rounded-xl p-2.5 text-xs bg-slate-50 font-bold">
-                <!-- สโมสร -->
+                <!-- รายชื่อทีม -->
               </select>
             </div>
           </div>
@@ -325,7 +341,7 @@
             </div>
             
             <div id="sets-inputs-container" class="space-y-2 max-h-[180px] overflow-y-auto pr-1">
-              <!-- แถวสำหรับกรอกคะแนนเซตจะถูกเพิ่มแบบไดนามิกที่นี่ -->
+              <!-- แถวสำหรับกรอกคะแนนเซต -->
             </div>
           </div>
 
@@ -337,25 +353,42 @@
       </div>
     </div>
 
+    <!-- MODAL 4: การตั้งค่าที่อยู่เว็บแอป (GAS API Config Modal) -->
+    <div id="modal-settings" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 hidden">
+      <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
+        <div class="bg-slate-900 text-white p-4">
+          <h3 class="font-extrabold text-sm">การตั้งค่าการเชื่อมต่อ</h3>
+          <p class="text-[10px] text-slate-300">กำหนดที่อยู่ Google Apps Script Web App</p>
+        </div>
+        <div class="p-4 space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-500 font-bold mb-1">Google Apps Script Web App URL</label>
+            <input type="text" id="settings-gas-url" class="w-full border rounded-xl p-2.5 text-[11px] bg-slate-50 focus:ring-1 focus:ring-blue-500" placeholder="https://script.google.com/macros/s/.../exec">
+          </div>
+          <div class="bg-blue-50 text-blue-800 p-3 rounded-xl space-y-1 text-[10px] leading-relaxed">
+            <p class="font-bold">⚠️ ข้อแนะนำสำคัญสำหรับการเชื่อมต่อ:</p>
+            <ul class="list-disc pl-4 space-y-0.5">
+              <li>ต้องทำการ Deploy หลังบ้านเป็น <strong>"เว็บแอป (Web App)"</strong></li>
+              <li>กำหนดผู้มีสิทธิ์ใช้งานเป็น <strong>"ทุกคน (Anyone)"</strong></li>
+              <li>เนื่องจากข้อจำกัดความปลอดภัย (CORS) บนหน้าทดสอบแอป คุณสามารถทำงานแบบออฟไลน์/เซฟในเครื่องแทนได้ ข้อมูลทั้งหมดจะไม่สูญหาย</li>
+            </ul>
+          </div>
+          <div class="flex space-x-2 pt-2 border-t">
+            <button onclick="closeSettingsModal()" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-[11px] transition">ยกเลิก</button>
+            <button onclick="saveSettings()" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-[11px] transition">บันทึกตั้งค่า</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- --- SCRIPTS AREA --- -->
   <script>
-    // ==========================================
-    // 1. DEXIE DATABASE & CONFIGURATION
-    // ==========================================
-    const db = new Dexie("VolleySquadDB");
-    db.version(1).stores({
-      teams: "Team_ID, Team_Name",
-      players: "Player_ID, Player_Name, Position_Code, Team_ID",
-      matches: "Match_ID, Match_Date, Team_A_ID, Team_B_ID, Status",
-      matchSets: "Set_ID, Match_ID, Set_Number",
-      syncQueue: "++id, type, timestamp"
-    });
+    // โหลดลิงก์ GAS API จากความจำเครื่อง หรือดึงค่าเริ่มต้นหากยังไม่ได้ตั้งค่า
+    let GAS_API_URL = localStorage.getItem('volleysquad_gas_url') || "https://script.google.com/macros/s/AKfycbz0jwqtszZHMup7c2tkT4oC8FyPAd69vZ0Yv7T84HLM98bVB_wttD7UGevto5ldOSCA/exec";
 
-    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbz0jwqtszZHMup7c2tkT4oC8FyPAd69vZ0Yv7T84HLM98bVB_wttD7UGevto5ldOSCA/exec";
-
-    // ชุดตัวอักษรสีสำหรับแท็กตารางผู้เล่น
+    // สไตล์ประจำตำแหน่งของนักกีฬา
     const POSITION_COLORS = {
       'UN': 'bg-slate-100 text-slate-800 border-slate-200',
       'S': 'bg-indigo-100 text-indigo-800 border-indigo-200',
@@ -374,11 +407,9 @@
       'L': 'ตัวรับอิสระ (Libero)'
     };
 
-    // State ประจำแอปพลิเคชัน
+    // สถานะหลักของระบบ (Single Source of Truth)
     let appState = {
       activeTab: 'home',
-      isOnline: true,
-      syncing: false,
       teams: [],
       players: [],
       matches: [],
@@ -386,7 +417,166 @@
     };
 
     // ==========================================
-    // 2. DATA NORMALIZATION (ป้องกันปัญหาระบบพิมพ์มือใน Google Sheets แล้วไม่ยอมดึงเข้าแอป)
+    // 1. CUSTOM ALERTS & TOAST CONTROLLER (ขจัดปัญหา alert() เดิม)
+    // ==========================================
+    function showAlert(title, message, icon = "⚠️") {
+      document.getElementById('custom-alert-icon').textContent = icon;
+      document.getElementById('custom-alert-title').textContent = title;
+      document.getElementById('custom-alert-message').textContent = message;
+      document.getElementById('custom-alert-modal').classList.remove('hidden');
+    }
+
+    function closeCustomAlert() {
+      document.getElementById('custom-alert-modal').classList.add('hidden');
+    }
+
+    function showToast(message, type = "info") {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `p-3 rounded-xl shadow-lg text-white font-bold text-xs flex items-center space-x-2 transition-all duration-300 transform translate-y-2 opacity-0 pointer-events-auto ${
+        type === 'error' ? 'bg-rose-500' : 'bg-slate-800'
+      }`;
+      toast.innerHTML = `
+        <span>${type === 'error' ? '❌' : 'ℹ️'}</span>
+        <span class="flex-1">${message}</span>
+      `;
+      container.appendChild(toast);
+      
+      setTimeout(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      }, 10);
+      
+      setTimeout(() => {
+        toast.classList.add('translate-y-2', 'opacity-0');
+        setTimeout(() => {
+          toast.remove();
+        }, 300);
+      }, 4000);
+    }
+
+    function showLoader(text = "กำลังประมวลผล...") {
+      document.getElementById('loading-text').textContent = text;
+      document.getElementById('loading-overlay').classList.remove('hidden');
+    }
+
+    function hideLoader() {
+      document.getElementById('loading-overlay').classList.add('hidden');
+    }
+
+    // ==========================================
+    // 2. DATA SYNCHRONIZATION WITH ROBUST FALLBACK
+    // ==========================================
+    window.addEventListener('load', async () => {
+      await fetchAllFromCloud();
+    });
+
+    async function fetchAllFromCloud() {
+      if (!navigator.onLine) {
+        showToast("คุณออฟไลน์อยู่ ระบบโหลดสตรีมข้อมูลในเครื่องแทน", "error");
+        loadFallbackLocalData();
+        return;
+      }
+      
+      showLoader("กำลังดึงข้อมูลล่าสุดจาก Google Sheets...");
+      try {
+        const res = await fetch(`${GAS_API_URL}?action=getAll`);
+        const cloudData = await res.json();
+        
+        if (cloudData && !cloudData.status) {
+          appState.teams = cloudData.teams.map(normalizeTeam).filter(t => t.Team_ID);
+          appState.players = cloudData.players.map(normalizePlayer).filter(p => p.Player_ID);
+          appState.matches = cloudData.matches.map(normalizeMatch).filter(m => m.Match_ID);
+          appState.matchSets = cloudData.matchSets.map(normalizeMatchSet).filter(s => s.Set_ID);
+          
+          // สำรองข้อมูลคลาวด์ลงความจำเครื่องเพื่อเป็นระบบกันเสีย
+          saveAppStateToLocalStorage();
+          
+          document.getElementById('connection-indicator').className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+          document.getElementById('connection-status').textContent = "เชื่อมต่อ Google Sheets โดยตรง";
+          renderAllTabs();
+        } else {
+          showToast("ดึงข้อมูลไม่สำเร็จสลับใช้โหมดออฟไลน์", "error");
+          loadFallbackLocalData();
+        }
+      } catch (e) {
+        console.warn("Fetch Cloud Error (CORS Sandbox / Network Issue): ", e);
+        loadFallbackLocalData();
+        
+        document.getElementById('connection-indicator').className = "w-2 h-2 rounded-full bg-amber-500";
+        document.getElementById('connection-status').textContent = "โหมดสำรองในเครื่อง (Sandbox)";
+        
+        // แจ้งรายละเอียดอย่างเป็นมิตรเกี่ยวกับสาเหตุ Failed to fetch
+        showToast("เปลี่ยนสลับเข้าใช้โหมดบันทึกข้อมูลงเครื่องแทน เนื่องจากติดปัญหา CORS");
+      } finally {
+        hideLoader();
+      }
+    }
+
+    function loadFallbackLocalData() {
+      const storedTeams = localStorage.getItem('volleysquad_teams');
+      const storedPlayers = localStorage.getItem('volleysquad_players');
+      const storedMatches = localStorage.getItem('volleysquad_matches');
+      const storedMatchSets = localStorage.getItem('volleysquad_matchSets');
+      
+      if (storedTeams && storedPlayers) {
+        appState.teams = JSON.parse(storedTeams);
+        appState.players = JSON.parse(storedPlayers);
+        appState.matches = storedMatches ? JSON.parse(storedMatches) : [];
+        appState.matchSets = storedMatchSets ? JSON.parse(storedMatchSets) : [];
+      } else {
+        // ใช้ข้อมูลจำลองชั่วคราวกรณีเปิดแอปพลิเคชันครั้งแรกบนบราวเซอร์เปล่า
+        appState.teams = [
+          { Team_ID: "team-1", Team_Name: "หนุมาน วีซี", Theme_Color: "#ef4444", Emoji_Logo: "🔥", Image_URL: "" },
+          { Team_ID: "team-2", Team_Name: "ฉลามชล เอสซี", Theme_Color: "#3b82f6", Emoji_Logo: "🦈", Image_URL: "" },
+          { Team_ID: "team-3", Team_Name: "พยัคฆ์ล้านนา", Theme_Color: "#f97316", Emoji_Logo: "🐯", Image_URL: "" }
+        ];
+        appState.players = [
+          { Player_ID: "p-1", Player_Name: "เกียรตินำ มีดี", Position_Code: "S", Team_ID: "team-1", Is_Captain: true, Image_URL: "" },
+          { Player_ID: "p-2", Player_Name: "สมชาย รักชาติ", Position_Code: "OH", Team_ID: "team-1", Is_Captain: false, Image_URL: "" },
+          { Player_ID: "p-3", Player_Name: "อนันต์ ยอดตบ", Position_Code: "OP", Team_ID: "team-2", Is_Captain: true, Image_URL: "" },
+          { Player_ID: "p-4", Player_Name: "นพดล ฝึกหัด", Position_Code: "UN", Team_ID: "", Is_Captain: false, Image_URL: "" }
+        ];
+        appState.matches = [];
+        appState.matchSets = [];
+        saveAppStateToLocalStorage();
+      }
+      renderAllTabs();
+    }
+
+    function saveAppStateToLocalStorage() {
+      localStorage.setItem('volleysquad_teams', JSON.stringify(appState.teams));
+      localStorage.setItem('volleysquad_players', JSON.stringify(appState.players));
+      localStorage.setItem('volleysquad_matches', JSON.stringify(appState.matches));
+      localStorage.setItem('volleysquad_matchSets', JSON.stringify(appState.matchSets));
+    }
+
+    // ==========================================
+    // 3. SETTINGS MODAL ENGINE (เปลี่ยนลิงก์ GAS หน้าเว็บ)
+    // ==========================================
+    function openSettingsModal() {
+      document.getElementById('settings-gas-url').value = GAS_API_URL;
+      document.getElementById('modal-settings').classList.remove('hidden');
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('modal-settings').classList.add('hidden');
+    }
+
+    async function saveSettings() {
+      const url = document.getElementById('settings-gas-url').value.trim();
+      if (!url.startsWith('https://')) {
+        showAlert("ข้อผิดพลาด", "รูปแบบที่อยู่ URL ของสคริปต์ Google Sheets ไม่ถูกต้อง!");
+        return;
+      }
+      GAS_API_URL = url;
+      localStorage.setItem('volleysquad_gas_url', url);
+      closeSettingsModal();
+      showToast("บันทึกการตั้งค่าลิงก์เซิร์ฟเวอร์เรียบร้อยแล้ว");
+      await fetchAllFromCloud();
+    }
+
+    // ==========================================
+    // 4. DATA NORMALIZATION UTILITIES
     // ==========================================
     function getValueByKeys(obj, keys, defaultValue = "") {
       for (let key of keys) {
@@ -442,71 +632,7 @@
     }
 
     // ==========================================
-    // 3. INITIALIZATION & ONLINE STATUS HANDLERS
-    // ==========================================
-    window.addEventListener('load', async () => {
-      updateOnlineStatus();
-      
-      window.addEventListener('online', () => {
-        updateOnlineStatus(true);
-        triggerBackgroundSync();
-      });
-      window.addEventListener('offline', () => updateOnlineStatus(false));
-
-      await loadLocalDataToState();
-      renderAllTabs();
-
-      if (appState.isOnline) {
-        triggerBackgroundSync();
-      }
-    });
-
-    function updateOnlineStatus(isOnline = navigator.onLine) {
-      appState.isOnline = isOnline;
-      const indicator = document.getElementById('connection-indicator');
-      const statusText = document.getElementById('connection-status');
-      
-      if (isOnline) {
-        indicator.className = "w-2 h-2 rounded-full bg-emerald-500";
-        statusText.textContent = "Online (Synced)";
-      } else {
-        indicator.className = "w-2 h-2 rounded-full bg-rose-500 animate-pulse";
-        statusText.textContent = "Offline Mode";
-      }
-    }
-
-    async function loadLocalDataToState() {
-      appState.teams = await db.teams.toArray();
-      appState.players = await db.players.toArray();
-      appState.matches = await db.matches.toArray();
-      appState.matchSets = await db.matchSets.toArray();
-
-      if (appState.teams.length === 0 && appState.players.length === 0) {
-        await initMockDatabase();
-      }
-    }
-
-    async function initMockDatabase() {
-      const mockTeams = [
-        { Team_ID: "team-1", Team_Name: "หนุมาน วีซี", Theme_Color: "#ef4444", Emoji_Logo: "🔥", Image_URL: "" },
-        { Team_ID: "team-2", Team_Name: "ฉลามชล เอสซี", Theme_Color: "#3b82f6", Emoji_Logo: "🦈", Image_URL: "" },
-        { Team_ID: "team-3", Team_Name: "พยัคฆ์ล้านนา", Theme_Color: "#f97316", Emoji_Logo: "🐯", Image_URL: "" }
-      ];
-
-      const mockPlayers = [
-        { Player_ID: "p-1", Player_Name: "เกียรตินำ มีดี", Position_Code: "S", Team_ID: "team-1", Is_Captain: true, Image_URL: "" },
-        { Player_ID: "p-2", Player_Name: "สมชาย รักชาติ", Position_Code: "OH", Team_ID: "team-1", Is_Captain: false, Image_URL: "" },
-        { Player_ID: "p-3", Player_Name: "อนันต์ ยอดตบ", Position_Code: "OP", Team_ID: "team-2", Is_Captain: true, Image_URL: "" },
-        { Player_ID: "p-4", Player_Name: "นพดล ฝึกหัด", Position_Code: "UN", Team_ID: "", Is_Captain: false, Image_URL: "" }
-      ];
-
-      await db.teams.bulkPut(mockTeams);
-      await db.players.bulkPut(mockPlayers);
-      await loadLocalDataToState();
-    }
-
-    // ==========================================
-    // 4. TAB CONTROLLER
+    // 5. TAB CONTROLLER
     // ==========================================
     function switchTab(tabId) {
       appState.activeTab = tabId;
@@ -535,9 +661,8 @@
     }
 
     // ==========================================
-    // 5. RENDERING & UI FUNCTIONS
+    // 6. UI RENDERING ENGINES
     // ==========================================
-
     function renderLeaderboard() {
       const container = document.getElementById('leaderboard-container');
       
@@ -583,7 +708,7 @@
         const rankDisplay = index < 3 ? podiums[index] : `<span class="text-xs font-black text-slate-400">${index + 1}</span>`;
 
         html += `
-          <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition">
+          <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition animate-fade-in">
             <div class="flex items-center space-x-3 min-w-0">
               <div class="w-6 flex justify-center">${rankDisplay}</div>
               ${team.Image_URL ? `
@@ -620,7 +745,7 @@
         const members = appState.players.filter(p => p.Team_ID === team.Team_ID);
         
         html += `
-          <div class="bg-white p-4 rounded-xl border border-slate-100 shadow-sm space-y-3">
+          <div class="bg-white p-4 rounded-xl border border-slate-100 shadow-sm space-y-3 animate-fade-in">
             <div class="flex justify-between items-start">
               <div class="flex items-center space-x-3">
                 ${team.Image_URL ? `
@@ -698,7 +823,7 @@
         const currentPosClass = POSITION_COLORS[player.Position_Code] || POSITION_COLORS['UN'];
         
         html += `
-          <div class="bg-white p-3 rounded-xl border border-slate-100 shadow-sm space-y-3 flex flex-col">
+          <div class="bg-white p-3 rounded-xl border border-slate-100 shadow-sm space-y-3 flex flex-col animate-fade-in">
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center space-x-2.5 min-w-0">
                 <div class="relative flex-shrink-0">
@@ -760,7 +885,7 @@
         if (!teamA || !teamB) return;
 
         html += `
-          <div class="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col space-y-3">
+          <div class="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col space-y-3 animate-fade-in">
             <div class="flex justify-between items-center text-[10px] text-slate-400 pb-2 border-b border-slate-50">
               <span class="font-bold">📅 วันที่: ${match.Match_Date}</span>
               <span class="px-2 py-0.5 rounded-full font-bold ${match.Status === 'completed' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-600 animate-pulse border border-red-100'}">
@@ -806,18 +931,36 @@
     }
 
     // ==========================================
-    // 6. INLINE ACTIONS (INSTANT FEEDBACK)
+    // 7. ONLINE-FIRST CORE OPERATIONS WITH HYBRID FALLBACK
     // ==========================================
     async function updatePlayerPositionInline(playerId, newPosCode) {
       const player = appState.players.find(p => p.Player_ID === playerId);
       if (!player) return;
 
       player.Position_Code = newPosCode;
-      await db.players.put(player);
-      await loadLocalDataToState();
+      
+      // บันทึกลงเครื่องเก็บเป็นข้อมูลล่าสุดก่อนป้องกันข้อผิดพลาด
+      saveAppStateToLocalStorage();
       renderPlayersList();
-
-      queueBackgroundAction('player', player);
+      
+      showLoader("กำลังอัปเดตตำแหน่งลง Google Sheets...");
+      try {
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'savePlayer', player: player })
+        });
+        const result = await res.json();
+        if (result.status === 'success') {
+          await fetchAllFromCloud();
+          showToast("อัปเดตตำแหน่งใน Sheets สำเร็จแล้ว!");
+        } else {
+          showToast("บันทึกในเครื่องสำเร็จ แต่ส่งเข้า Sheets ไม่สำเร็จ", "error");
+        }
+      } catch (e) {
+        showToast("เซฟตำแหน่งในเครื่องเรียบร้อย (คลาวด์ขัดข้อง)");
+      } finally {
+        hideLoader();
+      }
     }
 
     async function updatePlayerTeamInline(playerId, newTeamId) {
@@ -825,11 +968,27 @@
       if (!player) return;
 
       player.Team_ID = newTeamId;
-      await db.players.put(player);
-      await loadLocalDataToState();
+      saveAppStateToLocalStorage();
       renderPlayersList();
 
-      queueBackgroundAction('player', player);
+      showLoader("กำลังย้ายสังกัดสโมสรลง Google Sheets...");
+      try {
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'savePlayer', player: player })
+        });
+        const result = await res.json();
+        if (result.status === 'success') {
+          await fetchAllFromCloud();
+          showToast("ย้ายสังกัดใน Sheets สำเร็จแล้ว!");
+        } else {
+          showToast("บันทึกในเครื่องสำเร็จ แต่ส่งเข้า Sheets ไม่สำเร็จ", "error");
+        }
+      } catch (e) {
+        showToast("ย้ายสังกัดในเครื่องสำเร็จ (คลาวด์ขัดข้อง)");
+      } finally {
+        hideLoader();
+      }
     }
 
     async function uploadPlayerImageDirectly(event, playerId) {
@@ -841,20 +1000,41 @@
 
       const reader = new FileReader();
       reader.onloadend = async () => {
-        player.Image_URL = reader.result;
-        await db.players.put(player);
-        await loadLocalDataToState();
+        const base64Data = reader.result;
+        player.Image_URL = base64Data;
+        saveAppStateToLocalStorage();
         renderPlayersList();
 
-        queueBackgroundAction('player', player);
+        showLoader("กำลังอัปโหลดภาพขึ้นคลาวด์...");
+        try {
+          const res = await fetch(GAS_API_URL, {
+            method: 'POST',
+            body: JSON.stringify({
+              action: 'savePlayer',
+              player: {
+                ...player,
+                imageBase64: base64Data,
+                imageName: file.name
+              }
+            })
+          });
+          const result = await res.json();
+          if (result.status === 'success') {
+            await fetchAllFromCloud();
+            showToast("อัปโหลดภาพและเซฟลง Sheets สำเร็จ!");
+          } else {
+            showToast("เซฟภาพในเครื่องสำเร็จ แต่ส่งขึ้นคลาวด์ไม่สำเร็จ", "error");
+          }
+        } catch (e) {
+          showToast("บันทึกรูปภาพไว้ในเครื่องแล้ว (คลาวด์ขัดข้อง)");
+        } finally {
+          hideLoader();
+        }
       };
       reader.readAsDataURL(file);
     }
 
-    // ==========================================
-    // 7. MODAL INTERACTIVE LOGIC (CRUD)
-    // ==========================================
-
+    // --- TEAMS ---
     function openTeamModal(teamId = null) {
       const modal = document.getElementById('modal-team');
       const title = document.getElementById('modal-team-title');
@@ -911,32 +1091,69 @@
         Image_URL: base64Image
       };
 
-      await db.teams.put(teamPayload);
-      await loadLocalDataToState();
+      // บันทึกลงเครื่องแบบ Instant UI Update
+      const existingIdx = appState.teams.findIndex(t => t.Team_ID === teamId);
+      if (existingIdx > -1) {
+        appState.teams[existingIdx] = teamPayload;
+      } else {
+        appState.teams.push(teamPayload);
+      }
+      saveAppStateToLocalStorage();
       renderTeamsList();
       closeTeamModal();
 
-      queueBackgroundAction('team', teamPayload);
+      showLoader("กำลังจัดเก็บข้อมูลสโมสรลง Google Sheets...");
+      try {
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'saveTeam', team: teamPayload })
+        });
+        const result = await res.json();
+        if (result.status === 'success') {
+          await fetchAllFromCloud();
+          showToast("จัดเก็บข้อมูลสโมสรลง Google Sheets เรียบร้อย!");
+        } else {
+          showToast("เซฟในเครื่องสำเร็จ แต่ส่งเข้าคลาวด์ล้มเหลว", "error");
+        }
+      } catch (err) {
+        showToast("บันทึกข้อมูลสโมสรในเครื่องสำเร็จแล้ว (ออฟไลน์)");
+      } finally {
+        hideLoader();
+      }
     }
 
     async function deleteTeam(teamId) {
       if (confirm("ต้องการลบสโมสรนี้หรือไม่? สมาชิกในทีมจะหลุดเป็นอิสระไม่มีสังกัด")) {
-        await db.teams.delete(teamId);
-        
-        const members = appState.players.filter(p => p.Team_ID === teamId);
-        for (let m of members) {
-          m.Team_ID = '';
-          await db.players.put(m);
-        }
-
-        await loadLocalDataToState();
+        // อัปเดตในเครื่องทันที
+        appState.teams = appState.teams.filter(t => t.Team_ID !== teamId);
+        appState.players.forEach(p => {
+          if (p.Team_ID === teamId) p.Team_ID = '';
+        });
+        saveAppStateToLocalStorage();
         renderTeamsList();
 
-        const payload = { action: 'deleteItem', sheetName: 'Teams', idColumn: 'Team_ID', id: teamId };
-        queueBackgroundAction('delete', payload);
+        showLoader("กำลังลบสโมสรออกจาก Google Sheets...");
+        try {
+          const res = await fetch(GAS_API_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'deleteItem', sheetName: 'Teams', idColumn: 'Team_ID', id: teamId })
+          });
+          const result = await res.json();
+          if (result.status === 'success') {
+            await fetchAllFromCloud();
+            showToast("ลบสโมสรออกจาก Google Sheets แล้ว");
+          } else {
+            showToast("ลบในเครื่องเรียบร้อย แต่คลาวด์ดำเนินการไม่สำเร็จ", "error");
+          }
+        } catch (err) {
+          showToast("ลบสโมสรในเครื่องสำเร็จแล้ว");
+        } finally {
+          hideLoader();
+        }
       }
     }
 
+    // --- PLAYERS ---
     function openPlayerModal() {
       const modal = document.getElementById('modal-player');
       const teamSelect = document.getElementById('form-player-team');
@@ -975,25 +1192,61 @@
         Image_URL: base64Image
       };
 
-      await db.players.put(playerPayload);
-      await loadLocalDataToState();
+      // เซฟลงเครื่องทันทีเพื่อไม่ให้ผู้เล่นต้องรอนาน
+      appState.players.push(playerPayload);
+      saveAppStateToLocalStorage();
       renderPlayersList();
       closePlayerModal();
 
-      queueBackgroundAction('player', playerPayload);
+      showLoader("กำลังขึ้นทะเบียนนักกีฬาใหม่ลง Google Sheets...");
+      try {
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'savePlayer', player: playerPayload })
+        });
+        const result = await res.json();
+        if (result.status === 'success') {
+          await fetchAllFromCloud();
+          showToast("ลงทะเบียนนักกีฬาใน Google Sheets สำเร็จ!");
+        } else {
+          showToast("ลงทะเบียนในเครื่องสำเร็จ แต่ส่งเข้าคลาวด์ไม่ได้", "error");
+        }
+      } catch (err) {
+        showToast("บันทึกข้อมูลนักกีฬาในเครื่องสำเร็จแล้ว (ออฟไลน์)");
+      } finally {
+        hideLoader();
+      }
     }
 
     async function deletePlayer(pId) {
       if (confirm("คุณแน่ใจว่าต้องการลบรายชื่อนักกีฬาคนนี้?")) {
-        await db.players.delete(pId);
-        await loadLocalDataToState();
+        // เซฟลงเครื่องทันที
+        appState.players = appState.players.filter(p => p.Player_ID !== pId);
+        saveAppStateToLocalStorage();
         renderPlayersList();
 
-        const payload = { action: 'deleteItem', sheetName: 'Players', idColumn: 'Player_ID', id: pId };
-        queueBackgroundAction('delete', payload);
+        showLoader("กำลังเพิกถอนชื่อนักกีฬาออกจาก Google Sheets...");
+        try {
+          const res = await fetch(GAS_API_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'deleteItem', sheetName: 'Players', idColumn: 'Player_ID', id: pId })
+          });
+          const result = await res.json();
+          if (result.status === 'success') {
+            await fetchAllFromCloud();
+            showToast("เพิกถอนข้อมูลออกจากชีตสำเร็จ");
+          } else {
+            showToast("ลบผู้เล่นในเครื่องสำเร็จ แต่การถอดออกจากคลาวด์ล้มเหลว", "error");
+          }
+        } catch (err) {
+          showToast("ลบข้อมูลนักกีฬาออกจากเครื่องสำเร็จแล้ว");
+        } finally {
+          hideLoader();
+        }
       }
     }
 
+    // --- MATCHES ---
     function openMatchModal(matchId = null) {
       const modal = document.getElementById('modal-match');
       const teamASelect = document.getElementById('form-match-teamA');
@@ -1047,12 +1300,12 @@
       const setNumber = container.children.length + 1;
       
       if (setNumber > 5) {
-        alert("การแข่งขันวอลเลย์บอลจำกัดคะแนนแข่งขันได้สูงสุดเพียง 5 เซตเท่านั้น");
+        showAlert("จำกัดเซต", "การแข่งขันวอลเลย์บอลระดับสากลจำกัดคะแนนรวมได้สูงสุด 5 เซตครับ");
         return;
       }
 
       const row = document.createElement('div');
-      row.className = "flex items-center justify-between space-x-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200";
+      row.className = "flex items-center justify-between space-x-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 animate-fade-in";
       row.innerHTML = `
         <span class="font-bold text-slate-600">เซตที่ ${setNumber}</span>
         <div class="flex items-center space-x-2">
@@ -1096,7 +1349,7 @@
       const status = document.getElementById('form-match-status').value;
 
       if (teamAId === teamBId) {
-        alert("โปรดระบุคู่ชิงที่มีความแตกต่างกัน!");
+        showAlert("ข้อผิดพลาด", "โปรดระบุคู่ชิงสโมสรแข่งที่มีความแตกต่างกัน!");
         return;
       }
 
@@ -1149,167 +1402,74 @@
         Points_B: pointsB
       };
 
-      await db.matches.put(matchPayload);
-      await db.matchSets.where('Match_ID').equals(matchId).delete();
-      await db.matchSets.bulkPut(setsPayload);
-
-      await loadLocalDataToState();
+      // บันทึกลงความจำเครื่องทันที
+      const existingMatchIdx = appState.matches.findIndex(m => m.Match_ID === matchId);
+      if (existingMatchIdx > -1) {
+        appState.matches[existingMatchIdx] = matchPayload;
+      } else {
+        appState.matches.push(matchPayload);
+      }
+      appState.matchSets = appState.matchSets.filter(s => s.Match_ID !== matchId);
+      appState.matchSets.push(...setsPayload);
+      
+      saveAppStateToLocalStorage();
       renderAllTabs();
       closeMatchModal();
 
-      queueBackgroundAction('match', {
-        data: matchPayload,
-        sets: setsPayload
-      });
+      showLoader("กำลังประมวลผลคะแนนลง Google Sheets...");
+      try {
+        const res = await fetch(GAS_API_URL, {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'saveMatch',
+            match: matchPayload,
+            sets: setsPayload
+          })
+        });
+        const result = await res.json();
+        if (result.status === 'success') {
+          await fetchAllFromCloud();
+          showToast("จัดเก็บประวัติและสถิติการแข่งเข้า Sheets เรียบร้อย!");
+        } else {
+          showToast("คะแนนบันทึกในเครื่องสำเร็จ แต่ส่งเข้าคลาวด์ไม่ได้", "error");
+        }
+      } catch (err) {
+        showToast("บันทึกผลคะแนนและเซตในเครื่องสำเร็จแล้ว (ออฟไลน์)");
+      } finally {
+        hideLoader();
+      }
     }
 
     async function deleteMatch(matchId) {
       if (confirm("คุณแน่ใจว่าต้องการลบประวัติการแข่งขันและคะแนนรายเซตนี้ออกใช่หรือไม่?")) {
-        await db.matches.delete(matchId);
-        await db.matchSets.where('Match_ID').equals(matchId).delete();
-        
-        await loadLocalDataToState();
+        // ลบข้อมูลออกในเครื่องทันที
+        appState.matches = appState.matches.filter(m => m.Match_ID !== matchId);
+        appState.matchSets = appState.matchSets.filter(s => s.Match_ID !== matchId);
+        saveAppStateToLocalStorage();
         renderAllTabs();
 
-        const payload = { action: 'deleteItem', sheetName: 'Matches', idColumn: 'Match_ID', id: matchId };
-        queueBackgroundAction('delete', payload);
-      }
-    }
-
-    // ==========================================
-    // 8. OFFLINE-FIRST BACKGROUND SYNC ENGINE (DEDUPLICATED)
-    // ==========================================
-    async function queueBackgroundAction(type, dataPayload) {
-      const queueItem = {
-        type: type,
-        timestamp: Date.now(),
-        ...(type === 'delete' ? {
-          sheetName: dataPayload.sheetName,
-          idColumn: dataPayload.idColumn,
-          id: dataPayload.id
-        } : {
-          data: dataPayload.data || dataPayload,
-          sets: dataPayload.sets || undefined
-        })
-      };
-
-      await db.syncQueue.add(queueItem);
-      
-      if (appState.isOnline) {
-        triggerBackgroundSync();
-      }
-    }
-
-    // ฟังก์ชันกรองและเอาเฉพาะสถานะล่าสุดของ Entity ในคิวส่งออก (Debounce/Deduplicate) ป้องกันปัญหาข้อมูลซ้ำซ้อน
-    function deduplicateQueue(queue) {
-      const uniqueItems = {};
-      queue.forEach(item => {
-        let key = "";
-        if (item.type === "player" && item.data) {
-          key = "player_" + item.data.Player_ID;
-        } else if (item.type === "team" && item.data) {
-          key = "team_" + item.data.Team_ID;
-        } else if (item.type === "match" && item.data) {
-          key = "match_" + item.data.Match_ID;
-        } else if (item.type === "delete") {
-          key = "delete_" + item.sheetName + "_" + item.id;
+        showLoader("กำลังล้างประวัติการแข่งขันออกจาก Google Sheets...");
+        try {
+          const res = await fetch(GAS_API_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'deleteItem', sheetName: 'Matches', idColumn: 'Match_ID', id: matchId })
+          });
+          const result = await res.json();
+          if (result.status === 'success') {
+            await fetchAllFromCloud();
+            showToast("ลบข้อมูลแมตช์การแข่งขันใน Google Sheets แล้ว");
+          } else {
+            showToast("ลบข้อมูลในเครื่องเรียบร้อย แต่คลาวด์ดำเนินการไม่สำเร็จ", "error");
+          }
+        } catch (err) {
+          showToast("ลบข้อมูลการแข่งขันในเครื่องสำเร็จแล้ว");
+        } finally {
+          hideLoader();
         }
-
-        if (key) {
-          uniqueItems[key] = item; // ตัวอัปเดตล่าสุดจะทับตัวเก่าเสมอ
-        }
-      });
-      return Object.values(uniqueItems);
-    }
-
-    async function triggerBackgroundSync() {
-      if (appState.syncing) return;
-      
-      const fullQueue = await db.syncQueue.toArray();
-      if (fullQueue.length === 0) {
-        await fetchAllFromCloud();
-        return;
-      }
-
-      appState.syncing = true;
-      const syncBtn = document.getElementById('sync-button');
-      const syncText = document.getElementById('sync-text');
-      
-      syncBtn.classList.add('opacity-50');
-      syncText.textContent = "กำลังเชื่อมโยง...";
-
-      // กรองคิวออฟไลน์ให้เหลือเฉพาะสถานะล่าสุดเท่านั้น
-      const processedQueue = deduplicateQueue(fullQueue);
-
-      try {
-        const response = await fetch(GAS_API_URL, {
-          method: 'POST',
-          body: JSON.stringify({ action: 'syncAll', queue: processedQueue })
-        });
-        const result = await response.json();
-        
-        if (result.status === 'success') {
-          // เจาะจงลบเฉพาะแถว ID ที่ส่งไปซิงก์ประมวลผลแล้วเท่านั้น (ป้องกัน Race Condition ทับรายการแก้ไขในขณะกำลังส่ง)
-          const syncedIds = fullQueue.map(item => item.id);
-          await db.syncQueue.bulkDelete(syncedIds);
-          await fetchAllFromCloud();
-        }
-      } catch (err) {
-        console.warn("การเชื่อมโยงล้มเหลว คิวถูกเก็บในเครื่องและจะทำซิงก์ใหม่อัตโนมัติเมื่อสัญญาณคงที่", err);
-      } finally {
-        appState.syncing = false;
-        syncBtn.classList.remove('opacity-50');
-        syncText.textContent = "รีเฟรช";
       }
     }
 
-    async function fetchAllFromCloud() {
-      if (!appState.isOnline) return;
-      
-      try {
-        const res = await fetch(`${GAS_API_URL}?action=getAll`);
-        const cloudData = await res.json();
-        
-        if (cloudData.teams && cloudData.players) {
-          // Normalization: จัดสัดส่วนข้อมูลจากคลาวด์ให้อยู่ในเทมเพลตมาตรฐาน ป้องกันการพิมพ์หัวตารางในชีตผิด
-          const normTeams = cloudData.teams.map(normalizeTeam).filter(t => t.Team_ID);
-          const normPlayers = cloudData.players.map(normalizePlayer).filter(p => p.Player_ID);
-          const normMatches = cloudData.matches.map(normalizeMatch).filter(m => m.Match_ID);
-          const normSets = cloudData.matchSets.map(normalizeMatchSet).filter(s => s.Set_ID);
-
-          // ซิงก์ข้อมูลลงเบรวเซอร์ด้วยระบบ Put ที่ป้องกันข้อผิดพลาดการ Rollback แบบยกตาราง (bulkPut แทน bulkAdd)
-          try {
-            await db.teams.clear();
-            await db.teams.bulkPut(normTeams);
-          } catch(e) { console.error("Teams sync error", e); }
-
-          try {
-            await db.players.clear();
-            await db.players.bulkPut(normPlayers);
-          } catch(e) { console.error("Players sync error", e); }
-
-          try {
-            await db.matches.clear();
-            await db.matches.bulkPut(normMatches);
-          } catch(e) { console.error("Matches sync error", e); }
-
-          try {
-            await db.matchSets.clear();
-            await db.matchSets.bulkPut(normSets);
-          } catch(e) { console.error("Sets sync error", e); }
-
-          await loadLocalDataToState();
-          renderAllTabs();
-        }
-      } catch (e) {
-        console.warn("Operating in offline database", e);
-      }
-    }
-
-    function triggerCloudSync() {
-      triggerBackgroundSync();
-    }
-
+    // ฟังก์ชันช่วยย่อย: แปลงรูปภาพอัปโหลด
     function convertFileToBase64(fileInputId, previewImgId) {
       const fileInput = document.getElementById(fileInputId);
       const preview = document.getElementById(previewImgId);
