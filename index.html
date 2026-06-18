@@ -629,7 +629,7 @@
 
       // ปรับปรุง Dropdown ตัวเลือกคัดกรองตามข้อมูลสโมสรจริง
       const filterTeamSelect = document.getElementById('filter-team');
-      const currentSelectedFilterTeam = filterTeamSelect.value;
+      const currentSelectedFilterTeam = filterTeamSelect.value || 'all';
       let teamOptionsHtml = '<option value="all">ทั้งหมดทุกทีม</option><option value="none">ไม่มีสังกัดทีม</option>';
       appState.teams.forEach(t => {
         teamOptionsHtml += `<option value="${t.Team_ID}">${t.Team_Name}</option>`;
@@ -1228,6 +1228,12 @@
         const cloudData = await res.json();
         
         if (cloudData.teams && cloudData.players) {
+          // คัดกรองข้อมูลสลัดแถวที่ไม่มี ID ที่สมบูรณ์ออกเพื่อป้องกัน IndexedDB แครชในเครื่อง
+          const validTeams = cloudData.teams.filter(t => t.Team_ID && String(t.Team_ID).trim() !== "");
+          const validPlayers = cloudData.players.filter(p => p.Player_ID && String(p.Player_ID).trim() !== "");
+          const validMatches = cloudData.matches.filter(m => m.Match_ID && String(m.Match_ID).trim() !== "");
+          const validSets = cloudData.matchSets.filter(s => s.Set_ID && String(s.Set_ID).trim() !== "");
+
           // เคลียร์และเขียนทับข้อมูลในบราวเซอร์ด้วยข้อมูลอัปเดตล่าสุดจากคลาวด์
           await db.transaction('rw', [db.teams, db.players, db.matches, db.matchSets], async () => {
             await db.teams.clear();
@@ -1235,10 +1241,10 @@
             await db.matches.clear();
             await db.matchSets.clear();
 
-            await db.teams.bulkAdd(cloudData.teams);
-            await db.players.bulkAdd(cloudData.players);
-            await db.matches.bulkAdd(cloudData.matches);
-            await db.matchSets.bulkAdd(cloudData.matchSets);
+            await db.teams.bulkAdd(validTeams);
+            await db.players.bulkAdd(validPlayers);
+            await db.matches.bulkAdd(validMatches);
+            await db.matchSets.bulkAdd(validSets);
           });
 
           await loadLocalDataToState();
