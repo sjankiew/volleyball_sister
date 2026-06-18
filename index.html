@@ -856,6 +856,11 @@
       document.getElementById('modal-team').classList.add('hidden');
     }
 
+    // ฟังก์ชันยึดเปิด modal แก้ไขสโมสร
+    function editTeam(teamId) {
+      openTeamModal(teamId);
+    }
+
     async function saveTeam(e) {
       e.preventDefault();
       const teamId = document.getElementById('form-team-id').value || `team-${Math.random().toString(36).substring(2, 9)}`;
@@ -986,9 +991,13 @@
           document.getElementById('form-match-status').value = match.Status;
           
           const sets = appState.matchSets.filter(s => s.Match_ID === matchId);
-          sets.forEach(s => {
-            addNewSetRow(s.Score_A, s.Score_B);
-          });
+          if (sets.length > 0) {
+            sets.forEach(s => {
+              addNewSetRow(s.Score_A, s.Score_B);
+            });
+          } else {
+            addNewSetRow();
+          }
         }
       } else {
         document.getElementById('form-match-id').value = '';
@@ -1001,6 +1010,11 @@
 
     function closeMatchModal() {
       document.getElementById('modal-match').classList.add('hidden');
+    }
+
+    // ฟังก์ชันเรียกเปิดแก้ไขข้อมูลแมตช์
+    function editMatch(matchId) {
+      openMatchModal(matchId);
     }
 
     function addNewSetRow(scoreA = 0, scoreB = 0) {
@@ -1123,13 +1137,11 @@
       renderAllTabs();
       closeMatchModal();
 
-      // แพ็กข้อมูลส่งกลับคลาวด์
-      const syncPayload = {
-        action: 'saveMatch',
-        match: matchPayload,
+      // แพ็กข้อมูลส่งกลับคลาวด์แบบปลอดภัย (แยก Payload เป็น data และ sets ชัดเจน)
+      queueBackgroundAction('match', {
+        data: matchPayload,
         sets: setsPayload
-      };
-      queueBackgroundAction('match', syncPayload);
+      });
     }
 
     async function deleteMatch(matchId) {
@@ -1175,7 +1187,7 @@
       
       const queue = await db.syncQueue.toArray();
       if (queue.length === 0) {
-        // หากไม่มีคิวค้าง ให้ไปดึงข้อมูลล่าจากฝั่ง Google Sheet มารวมกัน
+        // หากไม่มีคิวค้าง ให้ไปดึงข้อมูลล่าสุดจากฝั่ง Google Sheet มารวมกัน
         await fetchAllFromCloud();
         return;
       }
